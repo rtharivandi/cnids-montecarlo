@@ -1,0 +1,221 @@
+# Baseline parameters for the reproduction of
+#   Casoria, Araldo, Patanè & Romano (2026), "From Hype to ROI: An Economic
+#   Model for LLM Adoption in Information Systems and Security Operations",
+#   arXiv:2610.33352.
+#
+# Every number used by the code lives in this file. Each value names its
+# source. Values that are our own choice, not the paper's, are marked
+# "# ASSUMPTION".
+#
+# Index names used throughout:
+#   severity a in {low, medium, high}
+#   task     k in {triage, analysis, documentation}
+#   role     r in {L1, L2, L3}
+#   model archetype m (see `archetypes`)
+
+# ---------------------------------------------------------------------------
+# Analysis window
+# ---------------------------------------------------------------------------
+analysis_window_hours: 24        # dT; paper: all costs are per 24-hour window
+
+# ---------------------------------------------------------------------------
+# Personnel
+# ---------------------------------------------------------------------------
+personnel_cost_per_hour:         # c_r in $/h, fully loaded
+  # US BLS OEWS May 2025, Information Security Analysts (SOC 15-1212),
+  # L1 = P10-P25, L2 = P25-P50, L3 = P50-P75 wages, x 1.43 benefits burden.
+  L1: 59.4
+  L2: 78.0
+  L3: 100.6
+
+# ---------------------------------------------------------------------------
+# Alert workload
+# ---------------------------------------------------------------------------
+alerts_per_window: 1000          # N; industry reports (median org: ~100)
+
+severity_share:                  # p_a; authors' experience
+  low: 0.85
+  medium: 0.13
+  high: 0.02
+
+analyst_share:                   # h_a, share of alerts that need an analyst; authors' experience
+  low: 0.15
+  medium: 0.50
+  high: 0.75
+
+effort_minutes:                  # tau_a, analyst minutes per alert; authors' experience
+  low: 10
+  medium: 30
+  high: 60
+
+task_split:                      # share of tau_a spent on each task k; authors' experience
+  triage: 0.20
+  analysis: 0.50
+  documentation: 0.30
+
+role_split:                      # alpha_{a,r}, share of the work done by role r; authors' experience
+  low:    {L1: 0.8, L2: 0.2, L3: 0.0}
+  medium: {L1: 0.5, L2: 0.5, L3: 0.0}
+  high:   {L1: 0.1, L2: 0.6, L3: 0.3}
+
+# ---------------------------------------------------------------------------
+# Human-LLM interaction (Eq. 4)
+# ---------------------------------------------------------------------------
+speed_ratio: 0.75                # eta, share of human time still needed when the LLM is right.
+                                 # Randomized trial (analysts 22-26% faster) and live telemetry
+                                 # (~30% lower mean time to resolve); paper range 0.70-0.78.
+rework_penalty: 0.75             # beta, extra effort when the LLM is wrong. No benchmark exists;
+                                 # the paper sets beta = eta (trials: experts 19% / ~26% slower with AI).
+
+# ---------------------------------------------------------------------------
+# LLM usage per alert that needs an analyst (Eq. 7, 8, 11)
+# Source: authors' experience, 4:1 input-to-output token ratio.
+# ASSUMPTION: the counts are per alert needing an analyst, not per task k and
+#             role r. This reproduces the paper's token demand of 20.6M/day.
+# ---------------------------------------------------------------------------
+llm_requests:                    # req_a, requests per alert
+  low: 5
+  medium: 10
+  high: 15
+
+tokens_in:                       # tok_in_a, input tokens per request
+  low: 8000
+  medium: 12000
+  high: 16000
+
+tokens_out:                      # tok_out_a, output tokens per request
+  low: 2000
+  medium: 3000
+  high: 4000                     # ASSUMPTION: not in the text we could read; 4000 follows the 4:1 ratio
+
+# ---------------------------------------------------------------------------
+# Self-hosting infrastructure (Eq. 9, 10, 12)
+# ---------------------------------------------------------------------------
+gpu:
+  name: NVIDIA H100 80 GB
+  memory_gb: 80                  # V_gpu; ASSUMPTION: 1 GB = 1e9 bytes (does not change any GPU count here)
+  cost_per_hour: 8.0             # c_gpu in $/h; avg on-demand price: AWS 6.88, Azure 6.98, Google Cloud 10.92
+
+bytes_per_param: 2               # FP16 weights; paper Eq. 10
+
+reference_model:                 # used to scale throughput (Eq. 12)
+  name: Llama-3.1-8B
+  throughput_tokens_per_s: 3000  # phi_ref; conservative vs MLPerf Inference v5.1 (~5,100 tok/s on one H100, FP8)
+  active_params_billion: 8       # delta_ref
+
+# ---------------------------------------------------------------------------
+# Model archetypes
+# accuracy E_m: mean of reported scores on six multiple-choice security
+#   benchmarks (CyberSOCEval, SecBench, CTIBench, CyberMetric, DFIR-Metric,
+#   CS-Eval) over 71 models; archetypes near the 90th, 50th, 20th percentile.
+# API prices in $ per million tokens: provider price lists, September 2026
+#   (Internet Archive for retired models).
+# ---------------------------------------------------------------------------
+archetypes:
+  API-High:
+    deployment: api
+    model_name: Grok-3
+    accuracy: 0.92
+    price_in_per_million: 3.00
+    price_out_per_million: 15.00
+  API-Mid:
+    deployment: api
+    model_name: gpt-4o-mini
+    accuracy: 0.87
+    price_in_per_million: 0.15
+    price_out_per_million: 0.60
+  API-Low:
+    deployment: api
+    model_name: claude-3-7-sonnet
+    accuracy: 0.58
+    price_in_per_million: 3.00
+    price_out_per_million: 15.00
+  SH-High:
+    deployment: self_hosted
+    model_name: Falcon-180B-Chat
+    accuracy: 0.88
+    total_params_billion: 180    # delta_tot
+    active_params_billion: 180   # delta_act
+  SH-Mid:
+    deployment: self_hosted
+    model_name: Qwen1.5-MoE-A2.7B
+    accuracy: 0.75
+    total_params_billion: 14
+    active_params_billion: 2.7
+  SH-Low:
+    deployment: self_hosted
+    model_name: Llama-3-8B
+    accuracy: 0.45
+    total_params_billion: 8
+    active_params_billion: 8
+
+# ---------------------------------------------------------------------------
+# Decision metrics (Eq. 14-17)
+# ---------------------------------------------------------------------------
+cost_of_missed_incident: 10.22e6 # C_miss in $; average US breach cost (paper's ref. 92)
+
+capex:
+  amortization_years: 3          # paper: one-off adoption cost amortized over 3 years
+  baseline_theta: 0.10           # theta = C_cap / C_noLLM; paper baseline
+  theta_grid:                    # theta is the swept decision variable
+    start: 0.01
+    stop: 1.00
+    num: 100                     # ASSUMPTION: grid resolution (step 0.01)
+
+# ---------------------------------------------------------------------------
+# Monte Carlo (Eq. 19, 20)
+# ---------------------------------------------------------------------------
+monte_carlo:
+  draws: 10000                   # paper: 10,000 draws per configuration
+  seed: 20261126                 # ASSUMPTION: any fixed seed
+  cv_levels: [0.05, 0.15, 0.25, 0.35]  # paper: one common coefficient of variation
+  tail_level: 0.10               # z for VaR_z and CVaR_z; paper uses VaR at 10%
+  confidence_level: 0.95         # ASSUMPTION: "confidently profitable" means P(profit) >= this
+  # Which inputs are uncertain, and their distribution family (paper).
+  # Everything not listed is deterministic.
+  # ASSUMPTION: the paper does not state how mean and CV map to the
+  # distribution parameters; we use the method of moments
+  # (see src/casoria/distributions.py).
+  distributions:
+    speed_ratio: beta
+    accuracy: beta
+    alerts_per_window: gamma
+    effort_minutes: gamma
+    rework_penalty: gamma
+    llm_requests: gamma
+    tokens_in: gamma
+    tokens_out: gamma
+
+# ---------------------------------------------------------------------------
+# Scenarios: overrides applied on top of this file (paper Section on results)
+# Keys are dotted paths into this file.
+# ---------------------------------------------------------------------------
+scenarios:
+  conservative: {}               # beta = eta = 0.75 (baseline)
+  no_rework_penalty:
+    rework_penalty: 0.0          # beta = 0
+  full_automation:
+    speed_ratio: 0.0             # eta = 0, humans only fix wrong answers
+
+# ---------------------------------------------------------------------------
+# One-at-a-time sensitivity (tornado), around the conservative baseline at
+# capex.baseline_theta. Each entry is a dotted path into this file;
+# "{archetype}" is replaced by each archetype's name. Mapping values (e.g.
+# per-severity tables) are scaled entry by entry. Add a line here to add a bar.
+# ---------------------------------------------------------------------------
+sensitivity:
+  relative_change: 0.25          # default low/high = value x (1 -/+ 0.25); spec default
+  parameters:
+    - path: speed_ratio
+      bounds: [0.0, 1.0]
+    - path: rework_penalty
+    - path: archetypes.{archetype}.accuracy
+      bounds: [0.0, 1.0]
+    - path: alerts_per_window
+    - path: effort_minutes
+    - path: personnel_cost_per_hour
+    - path: llm_requests
+    - path: tokens_in
+    - path: tokens_out
+    - path: gpu.cost_per_hour
+    - path: reference_model.throughput_tokens_per_s
